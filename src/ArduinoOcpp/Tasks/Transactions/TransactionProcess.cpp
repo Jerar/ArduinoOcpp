@@ -6,11 +6,9 @@
 
 #include <ArduinoOcpp/Debug.h>
 
-#define AO_TXPROC_FN AO_FILENAME_PREFIX "/txproc.cnf"
-
 using namespace ArduinoOcpp;
 
-TransactionProcess::TransactionProcess(uint connectorId) {
+TransactionProcess::TransactionProcess(unsigned int connectorId) {
 
 }
 

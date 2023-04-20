@@ -12,6 +12,8 @@
 #include <ArduinoOcpp/Platform.h>
 #include <ArduinoOcpp/Debug.h>
 
+#include <cstddef>
+
 using namespace ArduinoOcpp;
 using namespace ArduinoOcpp::Ocpp16;
 
@@ -52,13 +54,49 @@ ConnectorMeterValuesRecorder::ConnectorMeterValuesRecorder(OcppModel& context, i
         true,true,true,false
     );
 
-    MeterValuesInTxOnly = declareConfiguration<const char*>("AO_MeterValuesInTxOnly", "true", CONFIGURATION_FN, true, true, true, false);
-    StopTxnDataCapturePeriodic = declareConfiguration<const char*>("AO_StopTxnDataCapturePeriodic", "false", CONFIGURATION_FN, true, true, true, false);
+    MeterValuesInTxOnly = declareConfiguration<bool>("AO_MeterValuesInTxOnly", true, CONFIGURATION_FN, true, true, true, false);
+    StopTxnDataCapturePeriodic = declareConfiguration<bool>("AO_StopTxnDataCapturePeriodic", false, CONFIGURATION_FN, true, true, true, false);
 
     sampledDataBuilder = std::unique_ptr<MeterValueBuilder>(new MeterValueBuilder(samplers, MeterValuesSampledData));
     alignedDataBuilder = std::unique_ptr<MeterValueBuilder>(new MeterValueBuilder(samplers, MeterValuesAlignedData));
     stopTxnSampledDataBuilder = std::unique_ptr<MeterValueBuilder>(new MeterValueBuilder(samplers, StopTxnSampledData));
     stopTxnAlignedDataBuilder = std::unique_ptr<MeterValueBuilder>(new MeterValueBuilder(samplers, StopTxnAlignedData));
+
+    std::function<bool(const char*)> validateSelectString = [this] (const char *csl) {
+        bool isValid = true;
+        const char *l = csl; //the beginning of an entry of the comma-separated list
+        const char *r = l; //one place after the last character of the entry beginning with l
+        while (*l) {
+            if (*l == ',') {
+                l++;
+                continue;
+            }
+            r = l + 1;
+            while (*r != '\0' && *r != ',') {
+                r++;
+            }
+            bool found = false;
+            for (size_t i = 0; i < samplers.size(); i++) {
+                auto &measurand = samplers[i]->getProperties().getMeasurand();
+                if ((std::ptrdiff_t) measurand.length() == r - l &&                              //same length
+                        !strncmp(l, measurand.c_str(), measurand.length())) {   //same content
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                isValid = false;
+                AO_DBG_WARN("could not find metering device for %.*s", (int) (r - l), l);
+                break;
+            }
+            l = r;
+        }
+        return isValid;
+    };
+    MeterValuesSampledData->setValidator(validateSelectString);
+    StopTxnSampledData->setValidator(validateSelectString);
+    MeterValuesAlignedData->setValidator(validateSelectString);
+    StopTxnAlignedData->setValidator(validateSelectString);
 }
 
 OcppMessage *ConnectorMeterValuesRecorder::loop() {
@@ -85,18 +123,18 @@ OcppMessage *ConnectorMeterValuesRecorder::loop() {
             transaction = context.getConnectorStatus(connectorId)->getTransaction();
         }
         
-        if (transaction && transaction->isRunning()) {
+        if (transaction && transaction->isRunning() && !transaction->isSilent()) {
             //check during transaction
 
             if (!stopTxnData || stopTxnData->getTxNr() != transaction->getTxNr()) {
                 AO_DBG_WARN("reload stopTxnData");
                 //reload (e.g. after power cut during transaction)
-                stopTxnData = meterStore.getTxMeterData(*stopTxnSampledDataBuilder, connectorId, transaction->getTxNr());
+                stopTxnData = meterStore.getTxMeterData(*stopTxnSampledDataBuilder, transaction.get());
             }
         } else {
             //check outside of transaction
 
-            if (!(const char *) *MeterValuesInTxOnly || strcmp(*MeterValuesInTxOnly, "false")) {
+            if (!MeterValuesInTxOnly || *MeterValuesInTxOnly) {
                 //don't take any MeterValues outside of transactions
                 meterData.clear();
                 return nullptr;
@@ -148,13 +186,13 @@ OcppMessage *ConnectorMeterValuesRecorder::loop() {
     if (*MeterValueSampleInterval >= 1) {
         //record periodic tx data
 
-        if (ao_tick_ms() - lastSampleTime >= (ulong) (*MeterValueSampleInterval * 1000)) {
+        if (ao_tick_ms() - lastSampleTime >= (unsigned long) (*MeterValueSampleInterval * 1000)) {
             auto sampleMeterValues = sampledDataBuilder->takeSample(context.getOcppTime().getOcppTimestampNow(), ReadingContext::SamplePeriodic);
             if (sampleMeterValues) {
                 meterData.push_back(std::move(sampleMeterValues));
             }
 
-            if (stopTxnData && ((const char*) *StopTxnDataCapturePeriodic && !strcmp(*StopTxnDataCapturePeriodic, "true"))) {
+            if (stopTxnData && StopTxnDataCapturePeriodic && *StopTxnDataCapturePeriodic) {
                 auto sampleStopTx = stopTxnSampledDataBuilder->takeSample(context.getOcppTime().getOcppTimestampNow(), ReadingContext::SamplePeriodic);
                 if (sampleStopTx) {
                     stopTxnData->addTxData(std::move(sampleStopTx));
@@ -205,9 +243,9 @@ void ConnectorMeterValuesRecorder::addMeterValueSampler(std::unique_ptr<SampledV
     samplers.push_back(std::move(meterValueSampler));
 }
 
-std::unique_ptr<SampledValue> ConnectorMeterValuesRecorder::readTxEnergyMeter(ReadingContext reason) {
+std::unique_ptr<SampledValue> ConnectorMeterValuesRecorder::readTxEnergyMeter(ReadingContext context) {
     if (energySamplerIndex >= 0 && (size_t) energySamplerIndex < samplers.size()) {
-        return samplers[energySamplerIndex]->takeValue(reason);
+        return samplers[energySamplerIndex]->takeValue(context);
     } else {
         AO_DBG_DEBUG("Called readTxEnergyMeter(), but no energySampler or handling strategy set");
         return nullptr;
@@ -216,7 +254,7 @@ std::unique_ptr<SampledValue> ConnectorMeterValuesRecorder::readTxEnergyMeter(Re
 
 void ConnectorMeterValuesRecorder::beginTxMeterData(Transaction *transaction) {
     if (!stopTxnData || stopTxnData->getTxNr() != transaction->getTxNr()) {
-        stopTxnData = meterStore.getTxMeterData(*stopTxnSampledDataBuilder, connectorId, transaction->getTxNr());
+        stopTxnData = meterStore.getTxMeterData(*stopTxnSampledDataBuilder, transaction);
     }
 
     if (stopTxnData) {
@@ -229,7 +267,7 @@ void ConnectorMeterValuesRecorder::beginTxMeterData(Transaction *transaction) {
 
 std::shared_ptr<TransactionMeterData> ConnectorMeterValuesRecorder::endTxMeterData(Transaction *transaction) {
     if (!stopTxnData || stopTxnData->getTxNr() != transaction->getTxNr()) {
-        stopTxnData = meterStore.getTxMeterData(*stopTxnSampledDataBuilder, connectorId, transaction->getTxNr());
+        stopTxnData = meterStore.getTxMeterData(*stopTxnSampledDataBuilder, transaction);
     }
 
     if (stopTxnData) {
@@ -243,8 +281,7 @@ std::shared_ptr<TransactionMeterData> ConnectorMeterValuesRecorder::endTxMeterDa
 }
 
 std::shared_ptr<TransactionMeterData> ConnectorMeterValuesRecorder::getStopTxMeterData(Transaction *transaction) {
-
-    auto txData = meterStore.getTxMeterData(*stopTxnSampledDataBuilder, connectorId, transaction->getTxNr());
+    auto txData = meterStore.getTxMeterData(*stopTxnSampledDataBuilder, transaction);
 
     if (!txData) {
         AO_DBG_ERR("could not create TxData");

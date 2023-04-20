@@ -46,7 +46,7 @@ private:
     OcppEvseState currentStatus = OcppEvseState::NOT_SET;
     std::shared_ptr<Configuration<int>> minimumStatusDuration; //in seconds
     OcppEvseState reportedStatus = OcppEvseState::NOT_SET;
-    ulong t_statusTransition = 0;
+    unsigned long t_statusTransition = 0;
 
     std::function<PollResult<bool>()> onUnlockConnector;
 
@@ -56,11 +56,16 @@ private:
     TransactionProcess txProcess;
 
     std::shared_ptr<Configuration<int>> connectionTimeOut; //in seconds
-    std::shared_ptr<Configuration<const char*>> stopTransactionOnInvalidId;
-    std::shared_ptr<Configuration<const char*>> stopTransactionOnEVSideDisconnect;
-    std::shared_ptr<Configuration<const char*>> unlockConnectorOnEVSideDisconnect;
-    std::shared_ptr<Configuration<const char*>> localAuthorizeOffline;
-    std::shared_ptr<Configuration<const char*>> localPreAuthorize;
+    std::shared_ptr<Configuration<bool>> stopTransactionOnInvalidId;
+    std::shared_ptr<Configuration<bool>> stopTransactionOnEVSideDisconnect;
+    std::shared_ptr<Configuration<bool>> unlockConnectorOnEVSideDisconnect;
+    std::shared_ptr<Configuration<bool>> localAuthorizeOffline;
+    std::shared_ptr<Configuration<bool>> localPreAuthorize;
+
+    std::shared_ptr<Configuration<bool>> silentOfflineTransactions;
+    std::shared_ptr<Configuration<bool>> freeVendActive;
+    std::shared_ptr<Configuration<const char*>> freeVendIdTag;
+    bool freeVendTrackPlugged = false;
 public:
     ConnectorStatus(OcppModel& context, int connectorId);
 

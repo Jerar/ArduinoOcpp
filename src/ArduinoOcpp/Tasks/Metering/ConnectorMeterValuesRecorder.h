@@ -43,7 +43,7 @@ private:
     std::shared_ptr<Configuration<const char *>> stopTxnSampledDataSelect;
     std::shared_ptr<Configuration<const char *>> stopTxnAlignedDataSelect;
 
-    ulong lastSampleTime = 0; //0 means not charging right now
+    unsigned long lastSampleTime = 0; //0 means not charging right now
     OcppTimestamp nextAlignedTime;
     std::shared_ptr<Transaction> transaction;
     bool trackTxRunning = false;
@@ -58,8 +58,8 @@ private:
 
     std::shared_ptr<Configuration<int>> ClockAlignedDataInterval;
 
-    std::shared_ptr<Configuration<const char*>> MeterValuesInTxOnly;
-    std::shared_ptr<Configuration<const char*>> StopTxnDataCapturePeriodic;
+    std::shared_ptr<Configuration<bool>> MeterValuesInTxOnly;
+    std::shared_ptr<Configuration<bool>> StopTxnDataCapturePeriodic;
 public:
     ConnectorMeterValuesRecorder(OcppModel& context, int connectorId, MeterStore& meterStore);
 
